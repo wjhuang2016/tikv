@@ -436,27 +436,22 @@ impl Collator for CollatorUtf8Mb4BinNoPadding {
 
     #[inline]
     fn validate(bstr: &[u8]) -> Result<()> {
-        str::from_utf8(bstr)?;
         Ok(())
     }
 
     #[inline]
     fn write_sort_key<W: BufferWriter>(writer: &mut W, bstr: &[u8]) -> Result<usize> {
-        str::from_utf8(bstr)?;
         writer.write_bytes(bstr)?;
         Ok(bstr.len())
     }
 
     #[inline]
     fn sort_compare(a: &[u8], b: &[u8]) -> Result<Ordering> {
-        str::from_utf8(a)?;
-        str::from_utf8(b)?;
         Ok(a.cmp(b))
     }
 
     #[inline]
     fn sort_hash<H: Hasher>(state: &mut H, bstr: &[u8]) -> Result<()> {
-        str::from_utf8(bstr)?;
         bstr.hash(state);
         Ok(())
     }
