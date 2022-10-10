@@ -2,12 +2,16 @@
 
 use std::time::Duration;
 
+use tracker::TrackerToken;
 use txn_types::TimeStamp;
 
 use crate::{
     server::lock_manager::{waiter_manager, waiter_manager::Callback},
     storage::{txn::ProcessResult, types::StorageCallback},
 };
+
+pub mod lock_wait_context;
+pub mod lock_waiting_queue;
 
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub struct Lock {
@@ -24,6 +28,8 @@ pub struct DiagnosticContext {
     /// same statement) Currently it is the encoded SQL digest if the client
     /// is TiDB
     pub resource_group_tag: Vec<u8>,
+    /// The tracker is used to track and collect the lock wait details.
+    pub tracker: TrackerToken,
 }
 
 /// Time to wait for lock released when encountering locks.
@@ -58,6 +64,18 @@ impl WaitTimeout {
 impl From<u64> for WaitTimeout {
     fn from(i: u64) -> WaitTimeout {
         WaitTimeout::Millis(i)
+    }
+}
+
+/// Uniquely identifies a lock-waiting request in a `LockManager`.
+///
+/// Not used yet, but necessary for implementing `LockWaitQueues`.
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
+pub struct LockWaitToken(pub Option<u64>);
+
+impl LockWaitToken {
+    pub fn is_valid(&self) -> bool {
+        self.0.is_some()
     }
 }
 

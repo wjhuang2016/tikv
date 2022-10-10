@@ -14,10 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use causal_ts::{CausalTsProvider, CausalTsProviderImpl};
 use collections::{HashMap, HashSet};
 use concurrency_manager::ConcurrencyManager;
 use engine_traits::{KvEngine, RaftEngine};
-#[cfg(feature = "failpoints")]
 use fail::fail_point;
 use futures::{compat::Future01CompatExt, FutureExt};
 use grpcio_health::{HealthService, ServingStatus};
@@ -39,6 +39,7 @@ use resource_metering::{Collector, CollectorGuard, CollectorRegHandle, RawRecord
 use tikv_util::{
     box_err, debug, error, info,
     metrics::ThreadInfoStatistics,
+    store::QueryStats,
     sys::thread::StdThreadBuildWrapper,
     thd_name,
     time::{Instant as TiInstant, UnixSecs},
@@ -47,6 +48,7 @@ use tikv_util::{
     warn,
     worker::{Runnable, RunnableWithTimer, ScheduleError, Scheduler},
 };
+use txn_types::TimeStamp;
 use yatp::Remote;
 
 use crate::{
@@ -58,7 +60,6 @@ use crate::{
         transport::SignificantRouter,
         util::{is_epoch_stale, KeysInfoFormatter, LatencyInspector, RaftstoreDuration},
         worker::{
-            query_stats::QueryStats,
             split_controller::{SplitInfo, TOP_N},
             AutoSplitController, ReadStats, SplitConfigChange, WriteStats,
         },
@@ -439,7 +440,6 @@ const DEFAULT_LOAD_BASE_SPLIT_CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_COLLECT_TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 fn default_collect_tick_interval() -> Duration {
-    #[cfg(feature = "failpoints")]
     fail_point!("mock_collect_tick_interval", |_| {
         Duration::from_millis(1)
     });
@@ -447,9 +447,11 @@ fn default_collect_tick_interval() -> Duration {
 }
 
 fn config(interval: Duration) -> Duration {
-    #[cfg(feature = "failpoints")]
     fail_point!("mock_min_resolved_ts_interval", |_| {
         Duration::from_millis(50)
+    });
+    fail_point!("mock_min_resolved_ts_interval_disable", |_| {
+        Duration::from_millis(0)
     });
     interval
 }
@@ -672,17 +674,9 @@ where
         store_id: u64,
         scheduler: &Scheduler<Task<EK, ER>>,
     ) {
-        let min_resolved_ts = region_read_progress.with(|registry| {
-            registry
-            .iter()
-            .map(|(_, rrp)| rrp.safe_ts())
-            .filter(|ts| *ts != 0) // ts == 0 means the peer is uninitialized
-            .min()
-            .unwrap_or(0)
-        });
         let task = Task::ReportMinResolvedTs {
             store_id,
-            min_resolved_ts,
+            min_resolved_ts: region_read_progress.get_min_resolved_ts(),
         };
         if let Err(e) = scheduler.schedule(task) {
             error!(
@@ -721,21 +715,18 @@ const HOTSPOT_REPORT_CAPACITY: usize = 1000;
 
 // TODO: support dynamic configure threshold in future.
 fn hotspot_key_report_threshold() -> u64 {
-    #[cfg(feature = "failpoints")]
     fail_point!("mock_hotspot_threshold", |_| { 0 });
 
     HOTSPOT_KEY_RATE_THRESHOLD * 10
 }
 
 fn hotspot_byte_report_threshold() -> u64 {
-    #[cfg(feature = "failpoints")]
     fail_point!("mock_hotspot_threshold", |_| { 0 });
 
     HOTSPOT_BYTE_RATE_THRESHOLD * 10
 }
 
 fn hotspot_query_num_report_threshold() -> u64 {
-    #[cfg(feature = "failpoints")]
     fail_point!("mock_hotspot_threshold", |_| { 0 });
 
     HOTSPOT_QUERY_RATE_THRESHOLD * 10
@@ -906,6 +897,7 @@ where
     health_service: Option<HealthService>,
     curr_health_status: ServingStatus,
     coprocessor_host: CoprocessorHost<EK>,
+    causal_ts_provider: Option<Arc<CausalTsProviderImpl>>, // used for rawkv apiv2
 }
 
 impl<EK, ER, T> Runner<EK, ER, T>
@@ -931,6 +923,7 @@ where
         region_read_progress: RegionReadProgressRegistry,
         health_service: Option<HealthService>,
         coprocessor_host: CoprocessorHost<EK>,
+        causal_ts_provider: Option<Arc<CausalTsProviderImpl>>, // used for rawkv apiv2
     ) -> Runner<EK, ER, T> {
         // Register the region CPU records collector.
         let mut region_cpu_records_collector = None;
@@ -975,6 +968,7 @@ where
             health_service,
             curr_health_status: ServingStatus::Serving,
             coprocessor_host,
+            causal_ts_provider,
         }
     }
 
@@ -1611,10 +1605,30 @@ where
     ) {
         let pd_client = self.pd_client.clone();
         let concurrency_manager = self.concurrency_manager.clone();
+        let causal_ts_provider = self.causal_ts_provider.clone();
+
         let f = async move {
             let mut success = false;
             while txn_ext.max_ts_sync_status.load(Ordering::SeqCst) == initial_status {
-                match pd_client.get_tso().await {
+                // On leader transfer / region merge, RawKV API v2 need to invoke
+                // causal_ts_provider.flush() to renew cached TSO, to ensure that
+                // the next TSO returned by causal_ts_provider.get_ts() on current
+                // store must be larger than the store where the leader is on before.
+                //
+                // And it won't break correctness of transaction commands, as
+                // causal_ts_provider.flush() is implemented as pd_client.get_tso() + renew TSO
+                // cached.
+                let res: crate::Result<TimeStamp> =
+                    if let Some(causal_ts_provider) = &causal_ts_provider {
+                        causal_ts_provider
+                            .async_flush()
+                            .await
+                            .map_err(|e| box_err!(e))
+                    } else {
+                        pd_client.get_tso().await.map_err(Into::into)
+                    };
+
+                match res {
                     Ok(ts) => {
                         concurrency_manager.update_max_ts(ts);
                         // Set the least significant bit to 1 to mark it as synced.
