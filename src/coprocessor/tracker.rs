@@ -361,6 +361,7 @@ impl<E: Engine> Tracker<E> {
             static ANALYZE_FULL_SAMPLING: RefCell<Option<Box<dyn PerfContext>>> = RefCell::new(None);
             static CHECKSUM_TABLE: RefCell<Option<Box<dyn PerfContext>>> = RefCell::new(None);
             static CHECKSUM_INDEX: RefCell<Option<Box<dyn PerfContext>>> = RefCell::new(None);
+            static DDL: RefCell<Option<Box<dyn PerfContext>>> = RefCell::new(None);
             static TEST: RefCell<Option<Box<dyn PerfContext>>> = RefCell::new(None);
         }
         let tls_cell = match self.req_ctx.tag {
@@ -371,6 +372,7 @@ impl<E: Engine> Tracker<E> {
             ReqTag::analyze_full_sampling => &ANALYZE_FULL_SAMPLING,
             ReqTag::checksum_table => &CHECKSUM_TABLE,
             ReqTag::checksum_index => &CHECKSUM_INDEX,
+            ReqTag::ddl => &DDL,
             ReqTag::test => &TEST,
         };
         tls_cell.with(|c| {

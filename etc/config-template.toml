@@ -67,7 +67,7 @@
 [log]
 ## Log levels: debug, info, warn, error, fatal.
 ## Note that `debug` is only available in development builds.
-# level = "info"
+level = "debug"
 ## log format, one of json, text. Default to text.
 # format = "text"
 ## Enable automatic timestamps in log output, if not set, it will be defaulted to true.

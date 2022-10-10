@@ -155,6 +155,7 @@ impl BatchExecutorsRunner<()> {
                 ExecType::TypePartitionTableScan => {
                     other_err!("PartitionTableScan executor not implemented");
                 }
+                ExecType::TypeSort | ExecType::TypeWindow => todo!()
             }
         }
 

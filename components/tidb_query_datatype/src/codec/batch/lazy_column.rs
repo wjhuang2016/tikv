@@ -238,6 +238,22 @@ impl LazyBatchColumn {
         }
     }
 
+    pub fn encode_sortkey(
+        &self,
+        row_index: usize,
+        field_type: &impl FieldTypeAccessor,
+        ctx: &mut EvalContext,
+        output: &mut Vec<u8>,
+    ) -> Result<()> {
+        match self {
+            LazyBatchColumn::Raw(v) => {
+                output.extend_from_slice(&v[row_index]);
+                Ok(())
+            }
+            LazyBatchColumn::Decoded(ref v) => v.encode(row_index, field_type, ctx, output),
+        }
+    }
+
     /// Encodes into binary format.
     // FIXME: Use BufferWriter.
     pub fn encode(

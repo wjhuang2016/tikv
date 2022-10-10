@@ -31,6 +31,7 @@ pub(crate) mod metrics;
 pub mod readpool_impl;
 mod statistics;
 mod tracker;
+mod ddl;
 
 use std::sync::Arc;
 
@@ -55,6 +56,7 @@ use crate::storage::{mvcc::TimeStamp, Statistics};
 pub const REQ_TYPE_DAG: i64 = 103;
 pub const REQ_TYPE_ANALYZE: i64 = 104;
 pub const REQ_TYPE_CHECKSUM: i64 = 105;
+pub const REQ_TYPE_DDL: i64 = 106;
 
 pub const REQ_FLAG_TIDB_SYSSESSION: u64 = 2048;
 

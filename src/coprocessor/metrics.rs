@@ -26,6 +26,7 @@ make_auto_flush_static_metric! {
         analyze_full_sampling,
         checksum_table,
         checksum_index,
+        ddl,
         test,
     }
 

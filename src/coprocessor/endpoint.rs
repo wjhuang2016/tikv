@@ -16,7 +16,7 @@ use tidb_query_common::execute_stats::ExecSummary;
 use tikv_alloc::trace::MemoryTraceGuard;
 use tikv_kv::SnapshotExt;
 use tikv_util::{quota_limiter::QuotaLimiter, time::Instant};
-use tipb::{AnalyzeReq, AnalyzeType, ChecksumRequest, ChecksumScanOn, DagRequest, ExecType};
+use tipb::{AnalyzeReq, AnalyzeType, ChecksumRequest, ChecksumScanOn, DagRequest, ExecType, DdlRequest};
 use tokio::sync::Semaphore;
 use txn_types::Lock;
 
@@ -31,6 +31,7 @@ use crate::{
         need_check_locks, need_check_locks_in_replica_read, Engine, Snapshot, SnapshotStore,
     },
 };
+use crate::coprocessor::ddl::DDLContext;
 
 /// Requests that need time of less than `LIGHT_TASK_THRESHOLD` is considered as
 /// light ones, which means they don't need a permit from the semaphore before
@@ -330,6 +331,24 @@ impl<E: Engine> Endpoint<E> {
                         req_ctx,
                     )
                     .map(|h| h.into_boxed())
+                });
+            }
+            REQ_TYPE_DDL => {
+                let mut ddl = DdlRequest::default();
+                box_try!(ddl.merge_from(&mut input));
+                req_ctx = ReqContext::new(
+                    ReqTag::ddl,
+                    context,
+                    ranges,
+                    self.max_handle_duration,
+                    peer,
+                    None,
+                    start_ts.into(),
+                    cache_match_version,
+                    self.perf_level,
+                );
+                builder = Box::new(move |snap, req_ctx| {
+                    DDLContext::new(ddl, req.take_ranges().to_vec(), req.get_start_ts(), snap, req_ctx).map(|h| h.into_boxed())
                 });
             }
             tp => return Err(box_err!("unsupported tp {}", tp)),
