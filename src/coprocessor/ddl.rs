@@ -16,8 +16,6 @@ use crate::coprocessor::{ReqContext, RequestHandler, *};
 use crate::storage::{SnapshotStore, Snapshot};
 use kvproto::coprocessor::{KeyRange, Response};
 use codec::number::{NumberCodec, NumberDecoder};
-use tidb_query_datatype::builder::FieldTypeBuilder;
-use tidb_query_datatype::{FieldTypeFlag, FieldTypeTp};
 use tidb_query_datatype::codec::batch::LazyBatchColumnVec;
 use tidb_query_datatype::codec::datum_codec::EvaluableDatumEncoder;
 use tikv_util::codec::number::NumberEncoder;
@@ -37,6 +35,7 @@ impl<S: Snapshot> DDLContext<S> {
         snap: S,
         req_ctx: &ReqContext,
     ) -> Result<Self> {
+        warn!("range len {:?}", ranges.len());
         let store = SnapshotStore::new(
             snap,
             start_ts.into(),
@@ -57,6 +56,7 @@ impl<S: Snapshot> DDLContext<S> {
 #[async_trait]
 impl<S: Snapshot> RequestHandler for DDLContext<S> {
     async fn handle_request(&mut self) -> Result<MemoryTraceGuard<Response>> {
+        warn!("111111111111111111111111111111111111111111111111111 ddl handle_request");
         let columns_info: Vec<_> = self.req.take_columns().into();
         let idx_columns_info: tipb::IndexInfo = self.req.take_index_info();
         let table_info: tipb::TableInfo = self.req.take_table_info();
@@ -80,24 +80,25 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
 
         let mut is_drained = false;
         while !is_drained {
-            let mut result = table_scanner.next_batch(BATCH_MAX_SIZE);
+            warn!("222222222222222222222222222222222222222222 ddl handle_request");
+            let mut result = table_scanner.next_batch(BATCH_MAX_SIZE).await;
             is_drained = result.is_drained?;
+            warn!("333333333333333333333333 ddl handle_request {}, len {:?}", is_drained, result.logical_rows.len());
 
             let columns_slice = result.physical_columns.as_mut_slice();
             let columns_info = &columns_info[..];
             let int_handle_offset = columns_info.len()-1;
 
-            columns_slice[int_handle_offset].ensure_decoded(EvalContext::default().borrow_mut(), &FieldTypeBuilder::new()
-                .tp(FieldTypeTp::LongLong)
-                .flag(FieldTypeFlag::UNSIGNED)
-                .build(), LogicalRows::from_slice(result.logical_rows.as_slice())).unwrap();
+            for idx in 0..columns_info.len() {
+                columns_slice[idx].ensure_decoded(EvalContext::default().borrow_mut(), &field_type_from_column_info(&columns_info[idx]), LogicalRows::from_slice(result.logical_rows.as_slice())).unwrap();
+            }
             let handles = columns_slice[int_handle_offset].decoded().to_int_vec();
 
             for logical_row_offset in &result.logical_rows {
                 // let mut index_values = vec![];
                 let mut idx_key = vec![];
                 let idx_value: Vec<u8> = vec!['0' as u8];
-                let mut handle_buf:Vec<u8> = vec![0, 8];
+                let mut handle_buf:Vec<u8> = vec![0; 8];
                 NumberCodec::encode_i64(&mut handle_buf, handles.get(*logical_row_offset).unwrap().unwrap());
                 gen_index_key(&result.physical_columns, *logical_row_offset, &table_info, &idx_columns_info,   &handle_buf, &mut idx_key).unwrap();
                 warn!("key {:?}, value {:?}", idx_key, idx_value);
@@ -115,6 +116,8 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
 
         let mut resp = Response::default();
         resp.set_data(data);
+
+
         Ok(resp.into())
     }
 }
@@ -151,11 +154,12 @@ fn gen_index_key(indexed_values: &LazyBatchColumnVec, row_index: usize, table_in
     index_buf.extend_from_slice("_i".as_bytes());
     index_buf.encode_i64(index_info.get_index_id()).unwrap();
 
-    for  idx in 0..indexed_values.columns_len() {
+    // Don't consider handle here.
+    for  idx in 0..indexed_values.columns_len()-1 {
         let idx_value = indexed_values[idx].decoded();
         idx_value.encode_sort_key(row_index, &field_type_from_column_info(&index_info.get_columns()[idx]), EvalContext::default().borrow_mut(), index_buf).unwrap();
     }
 
-    index_buf.write_evaluable_datum_int( handle.as_slice().read_i64().unwrap(), true).unwrap();
+    index_buf.write_evaluable_datum_int( handle.as_slice().read_i64().unwrap(), false).unwrap();
     Ok(())
 }

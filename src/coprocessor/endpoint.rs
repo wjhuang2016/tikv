@@ -348,7 +348,7 @@ impl<E: Engine> Endpoint<E> {
                     self.perf_level,
                 );
                 builder = Box::new(move |snap, req_ctx| {
-                    DDLContext::new(ddl, req.take_ranges().to_vec(), req.get_start_ts(), snap, req_ctx).map(|h| h.into_boxed())
+                    DDLContext::new(ddl, req_ctx.ranges.clone(), start_ts, snap, req_ctx).map(|h| h.into_boxed())
                 });
             }
             tp => return Err(box_err!("unsupported tp {}", tp)),
