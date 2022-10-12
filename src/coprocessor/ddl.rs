@@ -55,6 +55,7 @@ impl<S: Snapshot> DDLContext<S> {
 #[async_trait]
 impl<S: Snapshot> RequestHandler for DDLContext<S> {
     async fn handle_request(&mut self) -> Result<MemoryTraceGuard<Response>> {
+        warn!("receive request");
         let columns_info: Vec<_> = self.req.take_columns().into();
         let idx_columns_info: tipb::IndexInfo = self.req.take_index_info();
         let table_info: tipb::TableInfo = self.req.take_table_info();
