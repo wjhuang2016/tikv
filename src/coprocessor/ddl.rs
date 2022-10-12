@@ -56,7 +56,7 @@ impl<S: Snapshot> DDLContext<S> {
 impl<S: Snapshot> RequestHandler for DDLContext<S> {
     async fn handle_request(&mut self) -> Result<MemoryTraceGuard<Response>> {
         warn!("receive request");
-        let mut request_total = Instant::now();
+        let request_total = Instant::now();
         let columns_info: Vec<_> = self.req.take_columns().into();
         let idx_columns_info: tipb::IndexInfo = self.req.take_index_info();
         let table_info: tipb::TableInfo = self.req.take_table_info();
@@ -80,6 +80,8 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
 
         let mut is_drained = false;
         let mut total = std::time::Duration::from_secs(0);
+        let mut gen_index_total = std::time::Duration::from_secs(0);
+
         while !is_drained {
             let mut result = table_scanner.next_batch(BATCH_MAX_SIZE).await;
             is_drained = result.is_drained?;
@@ -114,7 +116,12 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
                     }
                 }
 
+                let gen_index_key_time = Instant::now();
+
                 gen_index_key(&result.physical_columns, *logical_row_offset, &table_info, &idx_columns_info,   i, &mut idx_key).unwrap();
+
+                gen_index_total += gen_index_key_time.saturating_elapsed();
+
                 total_idx_key.push(idx_key);
                 total_idx_value.push(idx_value);
             }
@@ -132,7 +139,7 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
         let mut resp = Response::default();
         resp.set_data(data);
 
-        warn!("encode elapsed: {:?}, total elapsed: {:?}", total, request_total.saturating_elapsed());
+        warn!("encode elapsed: {:?}, gen_index_key: {:?}, total elapsed: {:?}", total, gen_index_total, request_total.saturating_elapsed());
 
         Ok(resp.into())
     }
