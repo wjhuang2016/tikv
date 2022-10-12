@@ -56,7 +56,7 @@ impl<S: Snapshot> DDLContext<S> {
 impl<S: Snapshot> RequestHandler for DDLContext<S> {
     async fn handle_request(&mut self) -> Result<MemoryTraceGuard<Response>> {
         warn!("receive request");
-        let mut request_total = std::time::Duration::from_secs(0);
+        let mut request_total = Instant::now();
         let columns_info: Vec<_> = self.req.take_columns().into();
         let idx_columns_info: tipb::IndexInfo = self.req.take_index_info();
         let table_info: tipb::TableInfo = self.req.take_table_info();
