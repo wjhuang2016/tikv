@@ -115,10 +115,9 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
                 gen_index_key(&result.physical_columns, *logical_row_offset, &table_info, &idx_columns_info,   i, &mut idx_key).unwrap();
                 total_idx_key.push(idx_key);
                 total_idx_value.push(idx_value);
-
-                let elapsed = start_time.saturating_elapsed();
-                total += elapsed;
             }
+            let elapsed = start_time.saturating_elapsed();
+            total += elapsed;
         }
         // while let Some((k, v)) = self.scanner.next()? {
         //
