@@ -34,7 +34,6 @@ impl<S: Snapshot> DDLContext<S> {
         snap: S,
         req_ctx: &ReqContext,
     ) -> Result<Self> {
-        warn!("range len {:?}", ranges.len());
         let store = SnapshotStore::new(
             snap,
             start_ts.into(),
@@ -110,7 +109,6 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
                 }
 
                 gen_index_key(&result.physical_columns, *logical_row_offset, &table_info, &idx_columns_info,   i, &mut idx_key).unwrap();
-                warn!("key {:?}, value {:?}", idx_key, idx_value);
                 total_idx_key.push(idx_key);
                 total_idx_value.push(idx_value);
             }
