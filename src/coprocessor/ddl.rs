@@ -18,6 +18,7 @@ use kvproto::coprocessor::{KeyRange, Response};
 use tidb_query_datatype::codec::batch::LazyBatchColumnVec;
 use tidb_query_datatype::codec::datum_codec::EvaluableDatumEncoder;
 use tikv_util::codec::number::NumberEncoder;
+use tikv_util::time::Instant;
 
 // `DDLContext` is used to handle `AnalyzeReq`
 pub struct DDLContext<S: Snapshot> {
@@ -76,9 +77,12 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
         let mut total_idx_value:Vec<Vec<u8>> = Vec::with_capacity(BATCH_MAX_SIZE);
 
         let mut is_drained = false;
+        let mut total = std::time::Duration::from_secs(0);
         while !is_drained {
             let mut result = table_scanner.next_batch(BATCH_MAX_SIZE).await;
             is_drained = result.is_drained?;
+
+            let start_time = Instant::now();
 
             let columns_slice = result.physical_columns.as_mut_slice();
             let columns_info = &columns_info[..];
@@ -111,6 +115,9 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
                 gen_index_key(&result.physical_columns, *logical_row_offset, &table_info, &idx_columns_info,   i, &mut idx_key).unwrap();
                 total_idx_key.push(idx_key);
                 total_idx_value.push(idx_value);
+
+                let elapsed = start_time.saturating_elapsed();
+                total += elapsed;
             }
         }
         // while let Some((k, v)) = self.scanner.next()? {
@@ -124,6 +131,7 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
         let mut resp = Response::default();
         resp.set_data(data);
 
+        warn!("elapsed: {:?}", total);
 
         Ok(resp.into())
     }
