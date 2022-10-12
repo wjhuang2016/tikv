@@ -72,8 +72,8 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
             self.req.take_primary_prefix_column_ids(),
         )?;
 
-        let mut total_idx_key:Vec<Vec<u8>> = vec![];
-        let mut total_idx_value:Vec<Vec<u8>> = vec![];
+        let mut total_idx_key:Vec<Vec<u8>> = Vec::with_capacity(BATCH_MAX_SIZE);
+        let mut total_idx_value:Vec<Vec<u8>> = Vec::with_capacity(BATCH_MAX_SIZE);
 
         let mut is_drained = false;
         while !is_drained {
@@ -95,7 +95,7 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
 
             for logical_row_offset in &result.logical_rows {
                 // let mut index_values = vec![];
-                let mut idx_key = vec![];
+                let mut idx_key = Vec::with_capacity(64);
                 let idx_value: Vec<u8> = vec!['0' as u8];
 
                 let i: i64;
@@ -156,9 +156,9 @@ fn gen_index_key(indexed_values: &LazyBatchColumnVec, row_index: usize, table_in
     // if index_info.has_unique() {
     //
     // }
-    index_buf.extend_from_slice("t".as_bytes());
+    index_buf.extend_from_slice(b"t");
     index_buf.encode_i64(table_info.get_table_id()).unwrap();
-    index_buf.extend_from_slice("_i".as_bytes());
+    index_buf.extend_from_slice(b"_i");
     index_buf.encode_i64(index_info.get_index_id()).unwrap();
 
     // Don't consider handle here.
