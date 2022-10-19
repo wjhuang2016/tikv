@@ -143,6 +143,7 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
         }
 
         let start_time = Instant::now();
+        raw_total_kv.truncate(row_idx);
         if need_sort {
             raw_total_kv.sort_by(|a, b| a.get_key().cmp(b.get_key()));
         }
