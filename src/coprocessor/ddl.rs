@@ -3,14 +3,14 @@
 use std::vec::Vec;
 use std::borrow::BorrowMut;
 use std::sync::Arc;
-use tipb::{self, DdlRequest};
+use tipb::{self, DdlRequest, KvPair};
 use tidb_query_datatype::codec::data_type::{BATCH_MAX_SIZE, ChunkRef, LogicalRows, VectorValue};
 use tidb_query_datatype::expr::{EvalConfig, EvalContext};
 use tidb_query_executors::BatchTableScanExecutor;
 use tidb_query_executors::util::scan_executor::*;
 use tidb_query_executors::interface::BatchExecutor;
 use tikv_alloc::MemoryTraceGuard;
-use protobuf::Message;
+use protobuf::{Message, RepeatedField};
 use crate::coprocessor::dag::TikvStorage;
 use crate::coprocessor::{ReqContext, RequestHandler, *};
 use crate::storage::{SnapshotStore, Snapshot};
@@ -60,6 +60,7 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
         let columns_info: Vec<_> = self.req.take_columns().into();
         let idx_columns_info: tipb::IndexInfo = self.req.take_index_info();
         let table_info: tipb::TableInfo = self.req.take_table_info();
+        let need_sort = self.req.get_sort();
         if columns_info.is_empty() {
             return Err(box_err!("empty columns_info"));
         }
@@ -75,12 +76,15 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
             self.req.take_primary_prefix_column_ids(),
         )?;
 
-        let mut total_idx_key:Vec<Vec<u8>> = Vec::with_capacity(BATCH_MAX_SIZE);
-        let mut total_idx_value:Vec<Vec<u8>> = Vec::with_capacity(BATCH_MAX_SIZE);
+        let mut raw_total_kv: Vec<KvPair> = vec![KvPair::new(); 1024 * 1024];
+        let raw_total_kv_len = raw_total_kv.len();
+        // let mut total_idx_key:Vec<Vec<u8>> = Vec::with_capacity(BATCH_MAX_SIZE);
+        // let mut total_idx_value:Vec<Vec<u8>> = Vec::with_capacity(BATCH_MAX_SIZE);
 
         let mut is_drained = false;
         let mut total = std::time::Duration::from_secs(0);
         let mut gen_index_total = std::time::Duration::from_secs(0);
+        let mut row_idx = 0;
 
         while !is_drained {
             let mut result = table_scanner.next_batch(BATCH_MAX_SIZE).await;
@@ -122,24 +126,35 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
 
                 gen_index_total += gen_index_key_time.saturating_elapsed();
 
-                total_idx_key.push(idx_key);
-                total_idx_value.push(idx_value);
+                if row_idx < raw_total_kv_len {
+                    raw_total_kv[row_idx].set_key(idx_key);
+                    raw_total_kv[row_idx].set_value(idx_value);
+                } else {
+                    let mut kv = KvPair::new();
+                    kv.set_key(idx_key);
+                    kv.set_value(idx_value);
+                    raw_total_kv.push(kv);
+                }
+                row_idx+=1;
+
             }
             let elapsed = start_time.saturating_elapsed();
             total += elapsed;
         }
-        // while let Some((k, v)) = self.scanner.next()? {
-        //
-        // }
 
-        let resp = DdlResult::new(total_idx_key, total_idx_value).into_proto();
+        let start_time = Instant::now();
+        if need_sort {
+            raw_total_kv.sort_by(|a, b| a.get_key().cmp(b.get_key()));
+        }
+        let sort_elapsed = start_time.saturating_elapsed();
 
+        let resp = DdlResult::new(RepeatedField::from_vec(raw_total_kv)).into_proto();
         let data = box_try!(resp.write_to_bytes());
 
         let mut resp = Response::default();
         resp.set_data(data);
 
-        warn!("encode elapsed: {:?}, gen_index_key: {:?}, total elapsed: {:?}", total, gen_index_total, request_total.saturating_elapsed());
+        warn!("encode elapsed: {:?}, gen_index_key: {:?}, sort: {:?}, total elapsed: {:?}", total, gen_index_total, sort_elapsed, request_total.saturating_elapsed());
 
         Ok(resp.into())
     }
@@ -148,22 +163,19 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
 /// `DdlResult` collect the result of DDL request.
 #[derive(Default)]
 struct DdlResult {
-    keys: Vec<Vec<u8>>,
-    values: Vec<Vec<u8>>,
+    kvs: RepeatedField<KvPair>,
 }
 
 impl DdlResult {
-    fn new(index_key: Vec<Vec<u8>>, index_value: Vec<Vec<u8>>) -> DdlResult {
+    fn new(kvs: RepeatedField<KvPair>) -> DdlResult {
         DdlResult {
-            keys: index_key,
-            values: index_value,
+            kvs,
         }
     }
 
     fn into_proto(self) -> tipb::DdlResponse {
         let mut res = tipb::DdlResponse::default();
-        res.set_keys(protobuf::RepeatedField::from_vec(self.keys));
-        res.set_values(protobuf::RepeatedField::from_vec(self.values));
+        res.set_kv(self.kvs);
         res
     }
 }
