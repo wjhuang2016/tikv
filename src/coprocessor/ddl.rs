@@ -155,7 +155,7 @@ impl<S: Snapshot> RequestHandler for DDLContext<S> {
         let mut resp = Response::default();
         resp.set_data(data);
 
-        warn!("encode elapsed: {:?}, gen_index_key: {:?}, sort: {:?}, sort cnt, total elapsed: {:?}", total, gen_index_total, sort_elapsed, row_idx, request_total.saturating_elapsed());
+        warn!("encode elapsed: {:?}, gen_index_key: {:?}, sort: {:?}, sort cnt: {:?}, total elapsed: {:?}", total, gen_index_total, sort_elapsed, row_idx, request_total.saturating_elapsed());
 
         Ok(resp.into())
     }
